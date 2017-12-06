@@ -3,14 +3,15 @@ import random
 import math
 import numpy as np
 
-attenuation = 0.98
+# Parameters
+attenuation = 1
 epoch_limit = 1000
 BATCH_SIZE = 100
-step_size = 0.002
+step_size = 0.5
 
-mndata = MNIST('data')
-images, labels = mndata.load_training()
-images_test, labels_test = mndata.load_testing()
+# Size
+N = 28 * 28 # Size of per test-point
+M = 10 # Kinds of labels
 
 class Variable:
 	def __init__(self, value = None):
@@ -30,33 +31,10 @@ class Variable:
 		self.gradient = np.zeros_like(value, dtype=np.float)
 	def applyGradient(self, step_size):
 		self.value = self.value * attenuation + self.gradient * step_size
+		self.gradient = np.zeros_like(self.gradient, dtype=np.float)
 	@staticmethod
 	def random():
 		return Variable(random.random() * 2 - 1);
-
-
-class Network:
-	def __init__(self):
-		self.variables = [];
-		self.cells = [];
-	def getVariablesAmount(self):
-		return len(self.variables);
-	def getCellsAmount(self):
-		return len(self.cells);
-	def appendVariable(self, variable):
-		self.variables.append(variable);
-	def appendCell(self, cell):
-		self.cells.append(cell);
-	def forwardPropagation(self):
-		for cell in self.cells:
-			cell.forwardPropagation();
-	def backwardPropagation(self):
-		for cell in reversed(self.cells):
-			#print(cell.getOutput())
-			cell.backwardPropagation();
-	def applyGradient(self, step_size):
-		for variable in self.variables:
-			variable.applyGradient(step_size);
 
 class Cell:
 	def getOutput(self):
@@ -89,18 +67,42 @@ class SoftmaxCell(SCell):
 	def forwardPropagation(self):
 		self.output = Variable(np.exp(self.input.getOutput().value) / np.sum(np.exp(self.input.getOutput().value)))
 	def backwardPropagation(self):
-		self.input.getOutput().gradient = -np.sum(self.output.gradient * self.output.value) * self.output.value + self.output.gradient * self.output.value;
+		self.input.getOutput().gradient += -np.sum(self.output.gradient * self.output.value) * self.output.value + self.output.gradient * self.output.value;
 
 class CrossEntropyCell(DCell):
 	def forwardPropagation(self):
-		self.output = Variable(np.sum(np.log(self.input0.getOutput().value) * -self.input1.getOutput().value))
+		self.output = Variable(-np.sum(np.log(self.input0.getOutput().value) * self.input1.getOutput().value))
 	def backwardPropagation(self):
-		self.input0.getOutput().gradient += self.input1.getOutput().value / self.input0.getOutput().value
-		self.input1.getOutput().gradient += self.input0.getOutput().value
+		self.input0.getOutput().gradient += self.output.gradient * -self.input1.getOutput().value / self.input0.getOutput().value
+		self.input1.getOutput().gradient += self.output.gradient * -np.log(self.input0.getOutput().value)
 
-# Size
-N = 28 * 28 # Size of per test-point
-M = 10 # Kinds of labels
+class Network:
+	def __init__(self):
+		self.variables = [];
+		self.cells = [];
+	def getVariablesAmount(self):
+		return len(self.variables);
+	def getCellsAmount(self):
+		return len(self.cells);
+	def appendVariable(self, variable):
+		self.variables.append(variable);
+	def appendCell(self, cell):
+		self.cells.append(cell);
+	def forwardPropagation(self):
+		for cell in self.cells:
+			cell.forwardPropagation();
+	def backwardPropagation(self):
+		for cell in reversed(self.cells):
+			# print(cell.getOutput())
+			cell.backwardPropagation();
+	def applyGradient(self, step_size):
+		for variable in self.variables:
+			variable.applyGradient(step_size);
+
+# Load tests
+mndata = MNIST('data')
+images, labels = mndata.load_training()
+images_test, labels_test = mndata.load_testing()
 
 # Network
 network = Network();
@@ -132,10 +134,9 @@ network.appendCell(softmaxCell)
 loss = CrossEntropyCell(softmaxCell, Y) # CrossEntropy(Softmax(X * W + B), Y) => Loss
 network.appendCell(loss)
 
-print(network.getCellsAmount(), network.getVariablesAmount());
-
 # Training
 for epoch_index in range(epoch_limit):
+	
 	# select a batch
 	batch_xs = [];
 	batch_ys = [];
@@ -148,22 +149,23 @@ for epoch_index in range(epoch_limit):
 		y_[0, y] = 1;
 		batch_xs.append(x);
 		batch_ys.append(y_);
+
 	# train use batch
+	batch_loss = 0
 	for batch_index in range(BATCH_SIZE):
 		x = batch_xs[batch_index];
 		y = batch_ys[batch_index];
-		for i in range(N):
-			X.takeInput(x);
-		for j in range(M):
-			Y.takeInput(y);
-		network.forwardPropagation()
+		X.takeInput(x);
+		Y.takeInput(y);
+		network.forwardPropagation() # Calculate loss
+		batch_loss += loss.getOutput().value
 		loss.getOutput().gradient = -1 / BATCH_SIZE
-		network.backwardPropagation()
-	#print('loss =', round(loss.getOutput().value, 5))
+		network.backwardPropagation() # Calculate gradient
+	network.applyGradient(step_size)
 
 	# test
-	if epoch_index % 100 == 0:
-		print(epoch_index, '/', epoch_limit)
+	print(epoch_index, '/', epoch_limit, 'loss =', round(batch_loss, 5))
+	if epoch_index % 100 == 99:
 		precision = 0
 		for index in range(len(images_test)):
 			x = np.array(images_test[index])[np.newaxis];
@@ -178,10 +180,3 @@ for epoch_index in range(epoch_limit):
 			if predict == y:
 				precision += 1 / len(images_test)
 		print('precision =', precision)
-
-
-	# apply total gradient
-	network.applyGradient(step_size)
-	#print(np.sum(W))
-	#print(B)
-	#break
