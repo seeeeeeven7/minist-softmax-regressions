@@ -1,17 +1,31 @@
 from mnist import MNIST
-import random
-import math
 import numpy as np
+import random
 
-# Parameters
-attenuation = 1
-epoch_limit = 1000
-BATCH_SIZE = 100
-step_size = 0.5
+# 数据准备
 
-# Size
-N = 28 * 28 # Size of per test-point
-M = 10 # Kinds of labels
+mndata = MNIST('data')
+images, labels = mndata.load_training()
+images_test, labels_test = mndata.load_testing()
+
+images = np.array(images)
+labels = np.array(labels)
+images_test = np.array(images_test)
+labels_test = np.array(labels_test)
+
+images = images / 255
+images_test = images_test / 255
+
+def toOneHot(labels):
+	labels_new = np.zeros([len(labels), 10])
+	for index in range(len(labels)):
+		labels_new[index][labels[index]] = 1
+	return labels_new
+
+labels = toOneHot(labels)
+labels_test = toOneHot(labels_test)
+
+# 输入层
 
 class Variable:
 	def __init__(self, value = None):
@@ -30,7 +44,7 @@ class Variable:
 		self.value = value;
 		self.gradient = np.zeros_like(value, dtype=np.float)
 	def applyGradient(self, step_size):
-		self.value = self.value * attenuation + self.gradient * step_size
+		self.value = self.value + self.gradient * step_size
 		self.gradient = np.zeros_like(self.gradient, dtype=np.float)
 	@staticmethod
 	def random():
@@ -99,24 +113,19 @@ class Network:
 		for variable in self.variables:
 			variable.applyGradient(step_size);
 
-# Load tests
-mndata = MNIST('data')
-images, labels = mndata.load_training()
-images_test, labels_test = mndata.load_testing()
-
 # Network
 network = Network();
 
 # Variables
-W = Variable(np.zeros([N, M]))
+W = Variable(np.zeros([784, 10]))
 network.appendVariable(W);
 
-B = Variable(np.zeros([1, M]))
+B = Variable(np.zeros([1, 10]))
 network.appendVariable(B);
 
 # Inputs Layer
-X = Variable(np.zeros([1, N]))
-Y = Variable(np.zeros([1, M]))
+X = Variable(np.zeros([1, 784]))
+Y = Variable(np.zeros([1, 10]))
 
 # Weighted-Sum
 matmulCell = MatMulCell(X, W) # X * W => [10, 1]
@@ -135,48 +144,45 @@ loss = CrossEntropyCell(softmaxCell, Y) # CrossEntropy(Softmax(X * W + B), Y) =>
 network.appendCell(loss)
 
 # Training
-for epoch_index in range(epoch_limit):
-	
-	# select a batch
-	batch_xs = [];
-	batch_ys = [];
-	for batch_index in range(BATCH_SIZE):
-		j = random.randint(0, len(images) - 1)
-		x = np.array(images[j])[np.newaxis];
-		x = x / 255
-		y = labels[j];
-		y_ = np.zeros([1, M]);
-		y_[0, y] = 1;
-		batch_xs.append(x);
-		batch_ys.append(y_);
+BATCH_NUMBER = 1000 # BATCH的数量
+BATCH_SIZE = 100 # BATCH的大小
+LEARNING_RATE = 0.5 #学习速率
+for batch_index in range(BATCH_NUMBER ):
+    # 构造一个BATCH
+    batch_xs = [];
+    batch_ys = [];
+    for data_index in range(BATCH_SIZE):
+        j = random.randint(0, len(images) - 1)
+        x = images[j][np.newaxis];
+        y = labels[j][np.newaxis];
+        batch_xs.append(x);
+        batch_ys.append(y);
 
-	# train use batch
-	batch_loss = 0
-	for batch_index in range(BATCH_SIZE):
-		x = batch_xs[batch_index];
-		y = batch_ys[batch_index];
-		X.takeInput(x);
-		Y.takeInput(y);
-		network.forwardPropagation() # Calculate loss
-		batch_loss += loss.getOutput().value
-		loss.getOutput().gradient = -1 / BATCH_SIZE
-		network.backwardPropagation() # Calculate gradient
-	network.applyGradient(step_size)
+    # 使用这个BATCH进行训练
+    batch_loss = 0
+    for data_index in range(BATCH_SIZE):
+        x = batch_xs[data_index];
+        y = batch_ys[data_index];
+        X.takeInput(x);
+        Y.takeInput(y);
+        network.forwardPropagation() # 正向传播
+        batch_loss += loss.getOutput().value # 统计整个BATCH的损失
+        loss.getOutput().gradient = -1 / BATCH_SIZE # 整个BATCH统一计算梯度，所以单个数据点的输出梯度只有1/BATCH_SIZE
+        network.backwardPropagation() # 反向传播
+    
+    # 引用梯度
+    network.applyGradient(LEARNING_RATE)
+    print('batch', batch_index, ', loss =', batch_loss)
 
-	# test
-	print(epoch_index, '/', epoch_limit, 'loss =', round(batch_loss, 5))
-	if epoch_index % 100 == 99:
-		precision = 0
-		for index in range(len(images_test)):
-			x = np.array(images_test[index])[np.newaxis];
-			x = x / 255
-			y = labels_test[index];
-			y_ = np.zeros([1, M]);
-			y_[0, y] = 1;
-			X.takeInput(x);
-			Y.takeInput(y_);
-			network.forwardPropagation()
-			predict = np.argmax(softmaxCell.getOutput().value)
-			if predict == y:
-				precision += 1 / len(images_test)
-		print('precision =', precision)
+# Test
+precision = 0
+for index in range(len(images_test)):
+    x = images_test[index][np.newaxis];
+    y = labels_test[index][np.newaxis];
+    X.takeInput(x);
+    Y.takeInput(y);
+    network.forwardPropagation()
+    predict = np.argmax(softmaxCell.getOutput().value)
+    if predict == np.argmax(y):
+        precision += 1 / len(images_test)
+print('Precision =', precision)
